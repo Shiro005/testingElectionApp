@@ -25,7 +25,7 @@ import WhatsAppShare from './Components/WhatsAppShare';
 const clearSiteData = async () => {
   try {
     console.log('🧹 Starting to clear all site data...');
-    
+
     // 1. Clear IndexedDB
     if (window.indexedDB) {
       const databases = await window.indexedDB.databases();
@@ -36,15 +36,15 @@ const clearSiteData = async () => {
         }
       }
     }
-    
+
     // 2. Clear localStorage
     localStorage.clear();
     console.log('🗑️ Cleared localStorage');
-    
+
     // 3. Clear sessionStorage
     sessionStorage.clear();
     console.log('🗑️ Cleared sessionStorage');
-    
+
     // 4. Clear cookies
     const cookies = document.cookie.split(";");
     for (let i = 0; i < cookies.length; i++) {
@@ -56,27 +56,27 @@ const clearSiteData = async () => {
       document.cookie = name + "=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/;domain=." + window.location.hostname;
     }
     console.log('🗑️ Cleared cookies');
-    
+
     // 5. Clear service worker cache (if any)
     if ('caches' in window) {
       const cacheNames = await caches.keys();
       await Promise.all(cacheNames.map(name => caches.delete(name)));
       console.log('🗑️ Cleared service worker caches');
     }
-    
+
     // 6. Clear application cache (if any)
     if (window.applicationCache) {
       window.applicationCache.clear();
     }
-    
+
     console.log('✅ All site data cleared successfully!');
-    
+
     // Show success message and reload
     setTimeout(() => {
       alert('All site data has been cleared successfully! The app will now reload.');
       window.location.reload();
     }, 1000);
-    
+
   } catch (error) {
     console.error('❌ Error clearing site data:', error);
     alert('Error clearing site data: ' + error.message);
@@ -86,12 +86,12 @@ const clearSiteData = async () => {
 // Clear Data Button Component
 const ClearDataButton = ({ mobile = false }) => {
   const [isClearing, setIsClearing] = useState(false);
-  
+
   const handleClearData = async () => {
     if (!window.confirm('Are you sure you want to clear ALL site data? This will delete all voter data, surveys, and settings. This action cannot be undone.')) {
       return;
     }
-    
+
     setIsClearing(true);
     try {
       await clearSiteData();
@@ -101,7 +101,7 @@ const ClearDataButton = ({ mobile = false }) => {
       setIsClearing(false);
     }
   };
-  
+
   if (mobile) {
     return (
       <button
@@ -114,7 +114,7 @@ const ClearDataButton = ({ mobile = false }) => {
       </button>
     );
   }
-  
+
   return (
     <button
       onClick={handleClearData}
@@ -147,6 +147,7 @@ const Navigation = ({ currentLanguage, languages, changeLanguage, translating, m
     { name: 'New Survey', path: '/new-survey', icon: '' },
     { name: 'Setting', path: '/settings', icon: '' },
     { name: 'Contact', path: '/contact', icon: '' },
+    { name: 'Demo', path: '/demo', icon: '' },
   ];
 
   const isActive = (path) => location.pathname === path;
@@ -269,7 +270,7 @@ const Navigation = ({ currentLanguage, languages, changeLanguage, translating, m
                   <User className="w-4 h-4 text-white" />
                 </div>
                 <div className="text-left">
-                  <div className="text-sm font-medium text-gray-900"> 
+                  <div className="text-sm font-medium text-gray-900">
                     Admin
                   </div>
                   <div className="text-xs text-gray-500"><TranslatedText>User</TranslatedText></div>
@@ -292,7 +293,7 @@ const Navigation = ({ currentLanguage, languages, changeLanguage, translating, m
                         <div className="text-xs text-gray-500">Jannetaa123</div>
                       </div>
 
-                      <button 
+                      <button
                         onClick={handleLogout}
                         className="w-full flex items-center gap-3 px-3 py-3 hover:bg-gray-50 rounded-lg transition-colors"
                       >
@@ -384,7 +385,7 @@ const Navigation = ({ currentLanguage, languages, changeLanguage, translating, m
                   <div className="text-xs text-gray-500">Jannetaa123</div>
                 </div>
               </div>
-              <button 
+              <button
                 onClick={handleLogout}
                 className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-base font-medium text-gray-600 hover:text-gray-900 hover:bg-gray-50 transition-all duration-200"
               >
@@ -468,116 +469,116 @@ function App() {
 
             <main className="flex-1">
               <Routes>
-                <Route 
-                  path="/login" 
+                <Route
+                  path="/login"
                   element={
-                    isAuthenticated ? 
-                    <Navigate to="/home" replace /> : 
-                    <Login onLogin={handleLogin} />
-                  } 
+                    isAuthenticated ?
+                      <Navigate to="/home" replace /> :
+                      <Login onLogin={handleLogin} />
+                  }
                 />
-                
-                <Route 
-                  path="/upload" 
+
+                <Route
+                  path="/upload"
                   element={
                     <ProtectedRoute isAuthenticated={isAuthenticated}>
                       <Upload onUploadComplete={handleUploadComplete} />
                     </ProtectedRoute>
-                  } 
+                  }
                 />
-                <Route 
-                  path="/search" 
+                <Route
+                  path="/search"
                   element={
                     <ProtectedRoute isAuthenticated={isAuthenticated}>
                       <Dashboard />
                     </ProtectedRoute>
-                  } 
+                  }
                 />
-                <Route 
-                  path="/home" 
+                <Route
+                  path="/home"
                   element={
                     <ProtectedRoute isAuthenticated={isAuthenticated}>
                       <Home />
                     </ProtectedRoute>
-                  } 
+                  }
                 />
-                <Route 
-                  path="/team" 
+                <Route
+                  path="/team"
                   element={
                     <ProtectedRoute isAuthenticated={isAuthenticated}>
                       <Team />
                     </ProtectedRoute>
-                  } 
+                  }
                 />
-                <Route 
-                  path="/booths" 
+                <Route
+                  path="/booths"
                   element={
                     <ProtectedRoute isAuthenticated={isAuthenticated}>
                       <BoothManagement />
                     </ProtectedRoute>
-                  } 
+                  }
                 />
-                <Route 
-                  path="/lists" 
+                <Route
+                  path="/lists"
                   element={
                     <ProtectedRoute isAuthenticated={isAuthenticated}>
                       <FilterPage />
                     </ProtectedRoute>
-                  } 
+                  }
                 />
-                <Route 
-                  path="/voter/:voterId" 
+                <Route
+                  path="/voter/:voterId"
                   element={
                     <ProtectedRoute isAuthenticated={isAuthenticated}>
                       <FullVoterDetails />
                     </ProtectedRoute>
-                  } 
+                  }
                 />
-                <Route 
-                  path="/contact" 
+                <Route
+                  path="/contact"
                   element={
                     <ProtectedRoute isAuthenticated={isAuthenticated}>
                       <Contactus />
                     </ProtectedRoute>
-                  } 
+                  }
                 />
-                <Route 
-                  path="/survey" 
+                <Route
+                  path="/survey"
                   element={
                     <ProtectedRoute isAuthenticated={isAuthenticated}>
                       <NewSurvey />
                     </ProtectedRoute>
-                  } 
+                  }
                 />
-                 <Route 
-                  path="/demo" 
+                <Route
+                  path="/demo"
                   element={
                     <ProtectedRoute isAuthenticated={isAuthenticated}>
                       <WhatsAppShare />
                     </ProtectedRoute>
-                  } 
+                  }
                 />
-                <Route 
-                  path="/settings" 
+                <Route
+                  path="/settings"
                   element={
                     <ProtectedRoute isAuthenticated={isAuthenticated}>
                       <Setting />
                     </ProtectedRoute>
-                  } 
+                  }
                 />
-                <Route 
-                  path="/new-survey" 
+                <Route
+                  path="/new-survey"
                   element={
                     <ProtectedRoute isAuthenticated={isAuthenticated}>
                       <NewSurvey />
                     </ProtectedRoute>
-                  } 
+                  }
                 />
-                <Route 
-                  path="/" 
+                <Route
+                  path="/"
                   element={
                     <Navigate to={isAuthenticated ? "/home" : "/login"} replace />
-                  } 
+                  }
                 />
               </Routes>
             </main>

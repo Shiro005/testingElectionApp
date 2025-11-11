@@ -41,6 +41,12 @@ const Home = () => {
       image: 'https://cdn-icons-gif.flaticon.com/11186/11186810.gif', // Replace with actual image path
       action: () => navigate('/booths'),
     },
+     {
+      id: 'demo',
+      title: 'Demo',
+      image: 'https://cdn-icons-gif.flaticon.com/11186/11186810.gif', // Replace with actual image path
+      action: () => navigate('/demo'),
+    },
   ];
 
   const bottomFeatures = [
