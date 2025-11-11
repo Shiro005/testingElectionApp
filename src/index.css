@@ -1,0 +1,4 @@
+@import "tailwindcss";
+* {
+  font-family: 'Noto Sans Devanagari', 'Baloo Bhai 2', 'Poppins', sans-serif !important;
+}
