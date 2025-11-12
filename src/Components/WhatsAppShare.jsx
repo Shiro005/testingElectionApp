@@ -2,28 +2,27 @@ import React, { useState } from "react";
 
 export default function WhatsAppShare() {
   const [caption, setCaption] = useState("");
+  const [number, setNumber] = useState("8668722207");
 
-  // 🔹 Fixed WhatsApp number (change this)
-  const whatsappNumber = "8668722207";
+  // 🔹 Host your image (can be on localhost, Cloudinary, Firebase Storage, etc.)
+  const hostedImageURL =
+    "https://yourdomain.com/uploads/share-image.png"; // change this
 
-  // 🔹 Fixed image (can also be base64: "data:image/png;base64,....")
-  const imageUrl =
-    "https://tse3.mm.bing.net/th/id/OIP.FEqv7YYMNjXtrVYqo7HHzAHaE7?cb=ucfimgc2&rs=1&pid=ImgDetMain&o=7&rm=3";
-
-  // Convert base64/URL image to File
-  async function getImageFile(imageUrl) {
-    const response = await fetch(imageUrl);
-    const blob = await response.blob();
+  // Convert hosted/base64 image to File
+  async function getImageFile(url) {
+    const res = await fetch(url);
+    const blob = await res.blob();
     return new File([blob], "share.png", { type: blob.type });
   }
 
-  // Handle share button click
   const handleShare = async () => {
-    try {
-      const file = await getImageFile(imageUrl);
-      const message = caption.trim() || "Default caption text";
+    const message =
+      caption.trim() ||
+      `Hello! Check out this image 👉 ${hostedImageURL}`;
 
-      // ✅ Use Web Share API if available (works in PWA/mobile browsers)
+    try {
+      const file = await getImageFile(hostedImageURL);
+
       if (navigator.canShare && navigator.canShare({ files: [file] })) {
         await navigator.share({
           title: "Share via WhatsApp",
@@ -31,12 +30,12 @@ export default function WhatsAppShare() {
           files: [file],
         });
       } else {
-        // ⚠️ Fallback: only send text if files unsupported
-        const encodedMsg = encodeURIComponent(message);
-        window.open(`https://wa.me/${whatsappNumber}?text=${encodedMsg}`, "_blank");
+        // 📞 Direct WhatsApp text fallback (no image)
+        const encoded = encodeURIComponent(message);
+        window.open(`https://wa.me/${number}?text=${encoded}`, "_blank");
       }
     } catch (err) {
-      console.error("Sharing failed:", err);
+      console.error("Share failed:", err);
       alert("Sharing not supported on this device.");
     }
   };
@@ -49,16 +48,24 @@ export default function WhatsAppShare() {
         </h2>
 
         <img
-          src={imageUrl}
+          src={hostedImageURL}
           alt="Preview"
           className="rounded-xl shadow-md w-full mb-4 border"
+        />
+
+        <input
+          type="text"
+          value={number}
+          onChange={(e) => setNumber(e.target.value)}
+          placeholder="Enter WhatsApp number"
+          className="w-full mb-3 p-2 border rounded-xl text-gray-700 focus:ring-2 focus:ring-orange-400"
         />
 
         <textarea
           value={caption}
           onChange={(e) => setCaption(e.target.value)}
           placeholder="Enter caption text..."
-          className="w-full p-3 border rounded-xl text-gray-700 focus:outline-none focus:ring-2 focus:ring-orange-400 resize-none mb-4"
+          className="w-full p-3 border rounded-xl text-gray-700 focus:ring-2 focus:ring-orange-400 resize-none mb-4"
           rows="3"
         />
 
@@ -70,7 +77,8 @@ export default function WhatsAppShare() {
         </button>
 
         <p className="text-sm text-gray-500 mt-3">
-          Works best on mobile or installed PWA.
+          Works best on mobile or installed PWA.  
+          (Direct image + caption sending to number needs WhatsApp API.)
         </p>
       </div>
     </div>
