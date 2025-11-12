@@ -9,6 +9,7 @@ lerna-debug.log*
 
 node_modules
 MainElectionAppCode
+PoliticianWebsite
 dist
 Backup
 dist

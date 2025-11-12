@@ -147,7 +147,6 @@ const Navigation = ({ currentLanguage, languages, changeLanguage, translating, m
     { name: 'New Survey', path: '/new-survey', icon: '' },
     { name: 'Setting', path: '/settings', icon: '' },
     { name: 'Contact', path: '/contact', icon: '' },
-    { name: 'Demo', path: '/demo', icon: '' },
   ];
 
   const isActive = (path) => location.pathname === path;

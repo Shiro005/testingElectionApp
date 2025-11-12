@@ -41,12 +41,6 @@ const Home = () => {
       image: 'https://cdn-icons-gif.flaticon.com/11186/11186810.gif', // Replace with actual image path
       action: () => navigate('/booths'),
     },
-     {
-      id: 'demo',
-      title: 'Demo',
-      image: 'https://cdn-icons-gif.flaticon.com/11186/11186810.gif', // Replace with actual image path
-      action: () => navigate('/demo'),
-    },
   ];
 
   const bottomFeatures = [
@@ -93,7 +87,16 @@ const Home = () => {
       {/* Content container sits above the image */}
       <div className="relative z-10 min-h-screen pb-8">
         {/* Main Content */}
-        <div className="pt-5 px-4">
+        <div className="max-w-md mx-auto mb-8 mt-3 px-4">
+          <div className="rounded-md overflow-hidden shadow-2xl border-1 border-white/80">
+            <img
+              src={candidateInfo.mainWhatsappBrandingImage}
+              alt="Political campaign"
+              className="w-full h-auto object-cover"
+            />
+          </div>
+        </div>
+        <div className="pt-0 px-4">
 
           {/* Combined Features Grid (merged top + bottom) */}
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 mb-8 max-w-3xl mx-auto px-4">
@@ -150,15 +153,7 @@ const Home = () => {
         </div>
 
         {/* Political Image Banner */}
-        <div className="max-w-md mx-auto mb-8 mt-8 px-4">
-          <div className="rounded-md overflow-hidden shadow-2xl border-1 border-white/80">
-            <img
-              src={candidateInfo.mainWhatsappBrandingImage}
-              alt="Political campaign"
-              className="w-full h-auto object-cover"
-            />
-          </div>
-        </div>
+
 
         <footer className="fixed bottom-3 left-1/2 -translate-x-1/2 z-50 w-[95%] md:w-auto">
           <div className="backdrop-blur-sm bg-white border border-white/30 shadow-lg w-auto rounded-full px-4 py-2 flex items-center justify-center gap-2 text-xs md:text-sm whitespace-nowrap select-none">
