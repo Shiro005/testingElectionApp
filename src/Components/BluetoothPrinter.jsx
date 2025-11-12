@@ -30,7 +30,7 @@ const BluetoothPrinter = ({ voter, familyMembers }) => {
   const { candidateInfo } = useCandidate();
 
   // Website URL - update this with your actual domain
-  const WEBSITE_URL = "https://testing-election-app.vercel.app/";
+  const WEBSITE_URL = "https://shriyashwebreich.site/";
 
   useEffect(() => {
     // Initialize from global connection state
@@ -66,7 +66,7 @@ const BluetoothPrinter = ({ voter, familyMembers }) => {
       document.body.appendChild(img);
       setTimeout(() => {
         try { document.body.removeChild(img); } catch (e) {}
-      }, 1000);
+      }, 3000);
     } catch (e) {
       // ignore
     }
