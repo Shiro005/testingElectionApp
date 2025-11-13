@@ -6,7 +6,6 @@ import jsPDF from 'jspdf';
 import TranslatedText from './TranslatedText';
 import { db } from '../Firebase/config';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { getStorage, ref as storageRef, uploadString, getDownloadURL } from 'firebase/storage';
 import { useCandidate } from '../Context/CandidateContext';
 
 // Global Bluetooth connection state
@@ -27,9 +26,11 @@ const BluetoothPrinter = ({ voter, familyMembers }) => {
   const [smsNumber, setSmsNumber] = useState('');
   const [isFamily, setIsFamily] = useState(false);
   const [voterData, setVoterData] = useState(null);
-  const [generatingImage, setGeneratingImage] = useState(false);
 
   const { candidateInfo } = useCandidate();
+
+  // Website URL - update this with your actual domain
+  const WEBSITE_URL = "https://shriyashwebreich.site/";
 
   useEffect(() => {
     // Initialize from global connection state
@@ -48,9 +49,30 @@ const BluetoothPrinter = ({ voter, familyMembers }) => {
 
     // Expose WhatsApp functions
     window.handleWhatsAppShare = handleWhatsAppShare;
+
+    // Prefetch small assets to show preview faster (non-blocking)
+    prefetchSitePreview();
+
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [voter]);
 
-  // Load voter data from local storage or Firebase
+  // Prefetch homepage (light, non-blocking) to help preview/link open speed
+  const prefetchSitePreview = async () => {
+    try {
+      // Try to create a hidden img to warm cache. It's safe and non-blocking.
+      const img = new Image();
+      img.src = WEBSITE_URL;
+      img.style.display = 'none';
+      document.body.appendChild(img);
+      setTimeout(() => {
+        try { document.body.removeChild(img); } catch (e) { }
+      }, 3000);
+    } catch (e) {
+      // ignore
+    }
+  };
+
+  // Load voter data from local storage or Firebase and merge voter_surveys
   const loadVoterData = async () => {
     try {
       const docId = voter?.id || voter?.voterId;
@@ -59,211 +81,80 @@ const BluetoothPrinter = ({ voter, familyMembers }) => {
         return;
       }
 
-      // Try to get from local storage first
+      // 1) Try to get from local storage first
       const localVoterData = localStorage.getItem(`voter_${docId}`);
+      let merged = { ...(voter || {}) };
+
       if (localVoterData) {
-        const parsedData = JSON.parse(localVoterData);
-        setVoterData({ ...voter, ...parsedData });
-        return;
-      }
-
-      // Fallback to Firebase
-      const voterDocRef = doc(db, 'voters', String(docId));
-      const voterDoc = await getDoc(voterDocRef);
-
-      if (voterDoc.exists()) {
-        const data = voterDoc.data();
-        // Save to local storage for future use
-        localStorage.setItem(`voter_${docId}`, JSON.stringify(data));
-        setVoterData({ ...voter, ...data });
+        try {
+          const parsedData = JSON.parse(localVoterData);
+          merged = { ...merged, ...parsedData };
+        } catch (e) {
+          console.warn('local parse error', e);
+        }
       } else {
-        setVoterData(voter);
+        // Try to get from voters collection
+        const voterDocRef = doc(db, 'voters', String(docId));
+        const voterDoc = await getDoc(voterDocRef);
+        if (voterDoc.exists()) {
+          const data = voterDoc.data();
+          merged = { ...merged, ...data };
+          localStorage.setItem(`voter_${docId}`, JSON.stringify(data));
+        }
       }
+
+      // 2) Try to merge contact info from voter_surveys (preferred source for contact)
+      try {
+        const vsRef = doc(db, 'voter_surveys', String(docId));
+        const vsSnap = await getDoc(vsRef);
+        if (vsSnap.exists()) {
+          const vsData = vsSnap.data() || {};
+          // Normalize phone keys (phone, whatsapp)
+          if (vsData.whatsapp) merged.whatsapp = String(vsData.whatsapp).replace(/\D/g, '');
+          if (vsData.phone) merged.phone = String(vsData.phone).replace(/\D/g, '');
+        }
+      } catch (e) {
+        console.warn('voter_surveys fetch failed', e);
+      }
+
+      // Save merged to local storage for quick future reads
+      localStorage.setItem(`voter_${docId}`, JSON.stringify(merged));
+      setVoterData(merged);
     } catch (error) {
       console.error('Error loading voter data:', error);
       setVoterData(voter);
     }
   };
 
-  // Fetch WhatsApp number from voter_surveys -> whatsapp_root fallback
-  const fetchWhatsAppNumberFromStores = async (docId) => {
-    try {
-      // 1) Try voterData (already loaded)
-      if (voterData?.whatsapp && voterData.whatsapp.length === 10) return voterData.whatsapp;
-
-      // 2) Try voter_surveys collection doc with id = docId
-      if (docId) {
-        const vsRef = doc(db, 'voter_surveys', String(docId));
-        const vsSnap = await getDoc(vsRef);
-        if (vsSnap.exists()) {
-          const data = vsSnap.data();
-          if (data?.whatsapp && String(data.whatsapp).replace(/\D/g, '').length === 10) {
-            return String(data.whatsapp).replace(/\D/g, '');
-          }
-        }
-      }
-
-      // 3) Fallback to whatsapp_root document
-      const rootRef = doc(db, 'whatsapp_root', 'root');
-      const rootSnap = await getDoc(rootRef);
-      if (rootSnap.exists()) {
-        const rootData = rootSnap.data();
-        if (rootData?.number && String(rootData.number).replace(/\D/g, '').length === 10) {
-          return String(rootData.number).replace(/\D/g, '');
-        }
-        if (rootData?.whatsapp && String(rootData.whatsapp).replace(/\D/g, '').length === 10) {
-          return String(rootData.whatsapp).replace(/\D/g, '');
-        }
-      }
-
-      // nothing found
-      return null;
-    } catch (e) {
-      console.error('Error fetching whatsapp number from stores:', e);
-      return null;
-    }
-  };
-
-  // Generate receipt as base64 image
-  const generateReceiptImageBase64 = async (isFamily, voterForImage, familyForImage) => {
-    ensureDevanagariFont();
-
-    const safeDiv = document.createElement('div');
-    safeDiv.style.width = '380px';
-    safeDiv.style.padding = '15px';
-    safeDiv.style.background = '#fff';
-    safeDiv.style.fontFamily = `"Noto Sans Devanagari", sans-serif`;
-    safeDiv.style.fontSize = '14px';
-    safeDiv.style.lineHeight = '1.4';
-    safeDiv.style.position = 'absolute';
-    safeDiv.style.left = '-9999px';
-    safeDiv.style.boxSizing = 'border-box';
-
-    let html = `
-      <div style="text-align:center;font-weight:700;font-size:16px;border-bottom:2px solid #000;padding-bottom:10px;margin-bottom:10px;">
-        ${escapeHtml(candidateInfo.party)}<br/>
-        <div style="font-size:24px;margin:8px 0;color:#1e40af;">${escapeHtml(candidateInfo.name)}</div>
-        <div style="font-size:14px;color:#555;">${escapeHtml(candidateInfo.slogan)}</div>
-        <div style="font-size:14px;margin-top:6px;color:#666;">${escapeHtml(candidateInfo.area)}</div>
-      </div>
-    `;
-
-    if (isFamily && Array.isArray(familyForImage) && familyForImage.length > 0) {
-      html += `
-        <div style="text-align:center;margin-top:10px;font-size:18px;font-weight:700;color:#1e40af;margin-bottom:15px;">
-          कुटुंब तपशील
-        </div>
-        <div style="margin-bottom:15px;padding-bottom:10px;border-bottom:1px solid #ddd;">
-          <div style="font-weight:700;font-size:16px;margin-bottom:5px;">1) ${escapeHtml(voterForImage.name || '')}</div>
-          <div style="margin:2px 0;">अनुक्रमांक: ${escapeHtml(voterForImage.serialNumber || '')}</div>
-          <div style="margin:2px 0;">मतदार आयडी: ${escapeHtml(voterForImage.voterId || '')}</div>
-          <div style="margin:2px 0;">बूथ क्रमांक: ${escapeHtml(voterForImage.boothNumber || '')}</div>
-          <div style="margin:2px 0;">लिंग: ${escapeHtml(voterForImage.gender || '')}</div>
-          <div style="margin:2px 0;">वय: ${escapeHtml(voterForImage.age || '')}</div>
-          <div style="margin:4px 0 0 0;font-size:13px;color:#555;">मतदान केंद्र: ${escapeHtml(voterForImage.pollingStationAddress || '')}</div>
-        </div>
-      `;
-
-      familyForImage.forEach((m, i) => {
-        html += `
-          <div style="margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid #eee;">
-            <div style="font-weight:700;font-size:15px;margin-bottom:4px;">${i + 2}) ${escapeHtml(m.name || '')}</div>
-            <div style="margin:2px 0;">अनुक्रमांक: ${escapeHtml(m.serialNumber || '')}</div>
-            <div style="margin:2px 0;">मतदार आयडी: ${escapeHtml(m.voterId || '')}</div>
-            <div style="margin:2px 0;">बूथ क्रमांक: ${escapeHtml(m.boothNumber || '')}</div>
-            <div style="margin:2px 0;">लिंग: ${escapeHtml(m.gender || '')}</div>
-            <div style="margin:2px 0;">वय: ${escapeHtml(m.age || '')}</div>
-            <div style="margin:4px 0 0 0;font-size:13px;color:#555;">मतदान केंद्र: ${escapeHtml(m.pollingStationAddress || '')}</div>
-          </div>
-        `;
-      });
-
-      html += `
-        <div style="margin-top:15px;padding-top:10px;border-top:2px solid #000;font-size:13px;text-align:center;color:#333;">
-          मी आपला <b>${candidateInfo.name}</b> माझी निशाणी <b>${candidateInfo.electionSymbol}</b> या चिन्हावर मतदान करून मला प्रचंड बहुमतांनी विजय करा
-        </div>
-      `;
-    } else {
-      html += `
-        <div style="text-align:center;margin-top:10px;font-size:18px;font-weight:700;color:#1e40af;margin-bottom:15px;">
-          मतदार तपशील
-        </div>
-        <div style="margin-bottom:10px;">
-          <div style="margin:6px 0;"><b>नाव:</b> ${escapeHtml(voterForImage.name || '')}</div>
-          <div style="margin:6px 0;"><b>मतदार आयडी:</b> ${escapeHtml(voterForImage.voterId || '')}</div>
-          <div style="margin:6px 0;"><b>अनुक्रमांक:</b> ${escapeHtml(voterForImage.serialNumber || '')}</div>
-          <div style="margin:6px 0;"><b>बूथ क्रमांक:</b> ${escapeHtml(voterForImage.boothNumber || '')}</div>
-          <div style="margin:6px 0;"><b>लिंग:</b> ${escapeHtml(voterForImage.gender || '')}</div>
-          <div style="margin:6px 0;"><b>वय:</b> ${escapeHtml(voterForImage.age || '')}</div>
-          <div style="margin:8px 0 0 0;font-size:13px;color:#555;"><b>मतदान केंद्र:</b> ${escapeHtml(voterForImage.pollingStationAddress || '')}</div>
-        </div>
-        <div style="margin-top:15px;padding-top:10px;border-top:2px solid #000;font-size:13px;text-align:center;color:#333;">
-          मी आपला <b>${candidateInfo.name}</b> माझी निशाणी <b>${candidateInfo.electionSymbol}</b> या चिन्हावर मतदान करून मला प्रचंड बहुमतांनी विजय करा
-        </div>
-        <div style="margin-top:8px;text-align:center;font-weight:700;color:#1e40af;">${escapeHtml(candidateInfo.name)}</div>
-      `;
-    }
-
-    safeDiv.innerHTML = html;
-    document.body.appendChild(safeDiv);
-
-    try {
-      const canvas = await html2canvas(safeDiv, {
-        scale: 2,
-        backgroundColor: '#fff',
-        useCORS: true,
-        width: 380,
-        height: safeDiv.scrollHeight,
-        windowWidth: 380,
-        windowHeight: safeDiv.scrollHeight
-      });
-      const dataUrl = canvas.toDataURL('image/png', 0.9);
-      return dataUrl;
-    } catch (e) {
-      console.error('generateReceiptImageBase64 failed:', e);
-      return null;
-    } finally {
-      document.body.removeChild(safeDiv);
-    }
-  };
-
-  // Upload base64 to Firebase Storage and get public URL
-  const uploadBase64ToFirebase = async (dataUrl) => {
-    try {
-      if (!dataUrl) return null;
-      const storage = getStorage();
-      const filePath = `voter_receipts/${Date.now()}_${Math.random().toString(36).substr(2, 9)}.png`;
-      const r = storageRef(storage, filePath);
-      await uploadString(r, dataUrl, 'data_url');
-      const url = await getDownloadURL(r);
-      return url;
-    } catch (e) {
-      console.error('uploadBase64ToFirebase failed:', e);
-      return null;
-    }
-  };
-
-  // Save contact number to Firebase and local storage
+  // Save contact number to voters and voter_surveys and local storage
   const saveContactNumber = async (type, number) => {
     try {
       const docId = voter?.id || voter?.voterId;
       if (!docId) throw new Error('Voter ID not available');
 
-      const voterDocRef = doc(db, 'voters', String(docId));
-      const updateData = type === 'whatsapp' ? { whatsapp: number } : { phone: number };
+      const cleaned = String(number).replace(/\D/g, '');
+      const updateData = type === 'whatsapp' ? { whatsapp: cleaned } : { phone: cleaned };
 
-      // Save to Firebase
+      // Save to voters collection (merge)
+      const voterDocRef = doc(db, 'voters', String(docId));
       await setDoc(voterDocRef, updateData, { merge: true });
 
-      // Update local storage
-      const localVoterData = localStorage.getItem(`voter_${docId}`);
-      if (localVoterData) {
-        const parsedData = JSON.parse(localVoterData);
-        localStorage.setItem(`voter_${docId}`, JSON.stringify({ ...parsedData, ...updateData }));
-      }
+      // Save to voter_surveys root (merge)
+      const vsDocRef = doc(db, 'voter_surveys', String(docId));
+      await setDoc(vsDocRef, updateData, { merge: true });
 
-      // Update local state
+      // Update local storage
+      const localVoterDataRaw = localStorage.getItem(`voter_${docId}`);
+      let localVoterData = {};
+      if (localVoterDataRaw) {
+        try { localVoterData = JSON.parse(localVoterDataRaw); } catch (e) { localVoterData = {}; }
+      }
+      const newLocal = { ...localVoterData, ...updateData };
+      localStorage.setItem(`voter_${docId}`, JSON.stringify(newLocal));
+
+      // Update local state quickly
       setVoterData(prev => ({ ...prev, ...updateData }));
+
       return true;
     } catch (error) {
       console.error(`Error saving ${type} number:`, error);
@@ -272,7 +163,9 @@ const BluetoothPrinter = ({ voter, familyMembers }) => {
   };
 
   const getContactNumber = (type) => {
-    return voterData?.[type] || '';
+    const val = voterData?.[type];
+    if (!val) return '';
+    return String(val).replace(/\D/g, '');
   };
 
   const hasContactNumber = (type) => {
@@ -281,212 +174,95 @@ const BluetoothPrinter = ({ voter, familyMembers }) => {
   };
 
   const validatePhoneNumber = (number) => {
-    const cleaned = number.replace(/\D/g, '');
+    const cleaned = String(number || '').replace(/\D/g, '');
     return cleaned.length === 10;
+  };
+
+  // Ensure we treat names as raw strings (preserve dots etc.)
+  const safeString = (v) => {
+    if (v === null || v === undefined) return '';
+    // replace invisible characters and trim, but keep dots and letters
+    return String(v).replace(/\u200C/g, '').replace(/\u200B/g, '').trim();
   };
 
   const generateWhatsAppMessage = (isFamily = false) => {
     if (!voterData) return '';
 
-    let message = `*${candidateInfo.party}*\n`;
-    message += `*${candidateInfo.name}*\n\n`;
+    // Use safeString to preserve punctuation (dots)
+    let message = `*${safeString(candidateInfo.party)}*\n`;
+    message += `*${safeString(candidateInfo.name)}*\n\n`;
 
-    if (isFamily && familyMembers.length > 0) {
+    if (isFamily && Array.isArray(familyMembers) && familyMembers.length > 0) {
       message += `*कुटुंब तपशील*\n\n`;
-      message += `*1) ${voterData.name}*\n`;
-      message += `अनुक्रमांक: ${voterData.serialNumber || 'N/A'}\n`;
-      message += `मतदार आयडी: ${voterData.voterId || 'N/A'}\n`;
-      message += `बूथ क्र.: ${voterData.boothNumber || 'N/A'}\n`;
-      message += `लिंग: ${voterData.gender || 'N/A'}\n`;
-      message += `वय: ${voterData.age || 'N/A'}\n`;
-      message += `मतदान केंद्र: ${voterData.pollingStationAddress || 'N/A'}\n\n`;
+      message += `*1) ${safeString(voterData.name)}*\n`;
+      message += `अनुक्रमांक: ${safeString(voterData.serialNumber || 'N/A')}\n`;
+      message += `मतदार आयडी: ${safeString(voterData.voterId || 'N/A')}\n`;
+      message += `बूथ क्र.: ${safeString(voterData.boothNumber || 'N/A')}\n`;
+      message += `लिंग: ${safeString(voterData.gender || 'N/A')}\n`;
+      message += `वय: ${safeString(voterData.age || 'N/A')}\n`;
+      message += `मतदान केंद्र: ${safeString(voterData.pollingStationAddress || 'N/A')}\n\n`;
 
       familyMembers.forEach((member, index) => {
-        message += `*${index + 2}) ${member.name}*\n`;
-        message += `अनुक्रमांक: ${member.serialNumber || 'N/A'}\n`;
-        message += `मतदार आयडी: ${member.voterId || 'N/A'}\n`;
-        message += `बूथ क्र.: ${member.boothNumber || 'N/A'}\n`;
-        message += `लिंग: ${member.gender || 'N/A'}\n`;
-        message += `वय: ${member.age || 'N/A'}\n`;
-        message += `मतदान केंद्र: ${member.pollingStationAddress || 'N/A'}\n\n`;
+        message += `*${index + 2}) ${safeString(member.name)}*\n`;
+        message += `अनुक्रमांक: ${safeString(member.serialNumber || 'N/A')}\n`;
+        message += `मतदार आयडी: ${safeString(member.voterId || 'N/A')}\n`;
+        message += `बूथ क्र.: ${safeString(member.boothNumber || 'N/A')}\n`;
+        message += `लिंग: ${safeString(member.gender || 'N/A')}\n`;
+        message += `वय: ${safeString(member.age || 'N/A')}\n`;
+        message += `मतदान केंद्र: ${safeString(member.pollingStationAddress || 'N/A')}\n\n`;
       });
     } else {
       message += `*मतदार तपशील*\n\n`;
-      message += `*नाव:* ${voterData.name}\n`;
-      message += `*मतदार आयडी:* ${voterData.voterId || 'N/A'}\n`;
-      message += `*अनुक्रमांक:* ${voterData.serialNumber || 'N/A'}\n`;
-      message += `*बूथ क्र.:* ${voterData.boothNumber || 'N/A'}\n`;
-      message += `*लिंग:* ${voterData.gender || 'N/A'}\n`;
-      message += `*वय:* ${voterData.age || 'N/A'}\n`;
-      message += `*मतदान केंद्र:* ${voterData.pollingStationAddress || 'N/A'}\n\n`;
+      message += `*नाव:* ${safeString(voterData.name)}\n`;
+      message += `*मतदार आयडी:* ${safeString(voterData.voterId || 'N/A')}\n`;
+      message += `*अनुक्रमांक:* ${safeString(voterData.serialNumber || 'N/A')}\n`;
+      message += `*बूथ क्र.:* ${safeString(voterData.boothNumber || 'N/A')}\n`;
+      message += `*लिंग:* ${safeString(voterData.gender || 'N/A')}\n`;
+      message += `*वय:* ${safeString(voterData.age || 'N/A')}\n`;
+      message += `*मतदान केंद्र:* ${safeString(voterData.pollingStationAddress || 'N/A')}\n\n`;
     }
 
-    message += `मी आपला *${candidateInfo.name}* माझी निशाणी *${candidateInfo.electionSymbol}* या चिन्हावर मतदान करून मला प्रचंड बहुमतांनी विजय करा\n\n`;
+    message += `मी आपला *${safeString(candidateInfo.name)}* माझी निशाणी *${safeString(candidateInfo.electionSymbol)}* या चिन्हावर मतदान करून मला प्रचंड बहुमतांनी विजय करा\n\n`;
+    message += `📍 *अधिक माहितीसाठी भेट द्या:* ${WEBSITE_URL}`;
 
     return message;
   };
 
-  // const handleWhatsAppShare = async (isFamilyShare = false) => {
-  //   if (!voter && !voterData) return;
-
-  //   setIsFamily(isFamilyShare);
-  //   setGeneratingImage(true);
-
-  //   try {
-  //     // 1) Resolve recipient whatsapp number
-  //     const docId = voter?.id || voter?.voterId || voterData?.id || voterData?.voterId;
-  //     const recipientNumber = await fetchWhatsAppNumberFromStores(docId);
-
-  //     // If no number found, show modal to enter number
-  //     if (!recipientNumber) {
-  //       setShowWhatsAppModal(true);
-  //       setGeneratingImage(false);
-  //       return;
-  //     }
-
-  //     // 2) Generate caption text
-  //     const message = generateWhatsAppMessage(isFamilyShare);
-
-  //     // 3) Generate receipt as image
-  //     const voterForImage = voterData || voter;
-  //     const familyForImage = isFamilyShare ? (familyMembers || []) : [];
-  //     const dataUrl = await generateReceiptImageBase64(isFamilyShare, voterForImage, familyForImage);
-
-  //     if (!dataUrl) {
-  //       throw new Error('Could not generate receipt image');
-  //     }
-
-  //     // 4) Try native sharing (best for PWA)
-  //     try {
-  //       const response = await fetch(dataUrl);
-  //       const blob = await response.blob();
-  //       const file = new File([blob], `voter_receipt_${voterForImage.voterId || 'details'}.png`, {
-  //         type: 'image/png'
-  //       });
-
-  //       if (navigator.canShare && navigator.canShare({ files: [file] })) {
-  //         await navigator.share({
-  //           files: [file],
-  //           text: message,
-  //           title: `${candidateInfo.name} - Voter Details`
-  //         });
-  //         setGeneratingImage(false);
-  //         return;
-  //       }
-  //     } catch (shareError) {
-  //       console.log('Native share not supported or failed:', shareError);
-  //       // Continue to fallback method
-  //     }
-
-  //     // 5) Fallback: Upload to Firebase and send URL via WhatsApp
-  //     const imageUrl = await uploadBase64ToFirebase(dataUrl);
-
-  //     let finalMessage = message;
-  //     if (imageUrl) {
-  //       finalMessage += `\n\n📄 Receipt Image: ${imageUrl}`;
-  //       finalMessage += `\n\n(Image will be displayed as a preview in WhatsApp)`;
-  //     }
-
-  //     const url = `https://wa.me/91${recipientNumber}?text=${encodeURIComponent(finalMessage)}`;
-  //     window.open(url, '_blank');
-
-  //   } catch (error) {
-  //     console.error('Error in WhatsApp share:', error);
-
-  //     // Ultimate fallback: text only
-  //     const docId = voter?.id || voter?.voterId || voterData?.id || voterData?.voterId;
-  //     const recipientNumber = await fetchWhatsAppNumberFromStores(docId);
-
-  //     if (recipientNumber) {
-  //       const message = generateWhatsAppMessage(isFamilyShare);
-  //       const url = `https://wa.me/91${recipientNumber}?text=${encodeURIComponent(message)}`;
-  //       window.open(url, '_blank');
-  //     } else {
-  //       setShowWhatsAppModal(true);
-  //     }
-  //   } finally {
-  //     setGeneratingImage(false);
-  //   }
-  // };
-
+  // Main WhatsApp share flow
   const handleWhatsAppShare = async (isFamilyShare = false) => {
-    if (!voter && !voterData) return;
+    if (!voterData) return;
 
     setIsFamily(isFamilyShare);
-    setGeneratingImage(true);
 
-    try {
-      // 1️⃣ Get recipient number
-      const docId = voter?.id || voter?.voterId || voterData?.id || voterData?.voterId;
-      const recipientNumber = await fetchWhatsAppNumberFromStores(docId);
+    const docId = voter?.id || voter?.voterId;
+    // Prefer the voter_surveys contact if available (we merged it on load)
+    const vsNumber = getContactNumber('whatsapp');
 
-      if (!recipientNumber) {
-        setShowWhatsAppModal(true);
-        setGeneratingImage(false);
-        return;
-      }
-
-      // 2️⃣ Prepare message text
+    if (vsNumber && vsNumber.length === 10) {
       const message = generateWhatsAppMessage(isFamilyShare);
-
-      // 3️⃣ Generate image
-      const voterForImage = voterData || voter;
-      const familyForImage = isFamilyShare ? (familyMembers || []) : [];
-      const dataUrl = await generateReceiptImageBase64(isFamilyShare, voterForImage, familyForImage);
-      if (!dataUrl) throw new Error('Image generation failed');
-
-      // 4️⃣ Try native share (Android / PWA only)
-      try {
-        const blob = await (await fetch(dataUrl)).blob();
-        const file = new File([blob], `voter_${voterForImage.voterId || 'details'}.png`, { type: 'image/png' });
-
-        if (navigator.canShare && navigator.canShare({ files: [file] })) {
-          await navigator.share({
-            files: [file],
-            text: message,
-            title: 'Voter Details'
-          });
-          console.log('✅ Shared via native share');
-          return;
-        }
-      } catch (err) {
-        console.warn('❌ Native share failed or not supported:', err);
-      }
-
-      // 5️⃣ Fallback → Upload image to Firebase and send text + link
-      const imageUrl = await uploadBase64ToFirebase(dataUrl);
-      const finalText = `${message}\n\n🖼️ View Card: ${imageUrl}`;
-      const whatsappUrl = `https://wa.me/91${recipientNumber}?text=${encodeURIComponent(finalText)}`;
-
-      // 6️⃣ Use platform-specific open method
-      if (navigator.userAgent.includes('Android')) {
-        // Try direct intent for Android WhatsApp app
-        window.location.href = `intent://send?phone=91${recipientNumber}&text=${encodeURIComponent(finalText)}#Intent;scheme=whatsapp;package=com.whatsapp;end`;
-      } else {
-        // Fallback: open WhatsApp Web or iPhone app
-        window.open(whatsappUrl, '_blank');
-      }
-
-    } catch (error) {
-      console.error('⚠️ WhatsApp share failed:', error);
-      alert('Sharing failed. Please try again.');
-    } finally {
-      setGeneratingImage(false);
+      const url = `https://wa.me/91${vsNumber}?text=${encodeURIComponent(message)}`;
+      window.open(url, '_blank');
+      return;
     }
+
+    // If no number saved, open modal prefilled with any existing number (if any)
+    setWhatsappNumber(getContactNumber('whatsapp') || '');
+    setShowWhatsAppModal(true);
   };
 
   const handleSMSShare = async () => {
     if (!voterData) return;
 
-    const hasPhone = hasContactNumber('phone');
+    const vsNumber = getContactNumber('phone');
 
-    if (hasPhone) {
-      // Direct SMS if number exists
+    if (vsNumber && vsNumber.length === 10) {
       const message = generateWhatsAppMessage(false);
-      window.open(`sms:${getContactNumber('phone')}?body=${encodeURIComponent(message)}`, '_blank');
-    } else {
-      setShowSMSModal(true);
+      window.open(`sms:${vsNumber}?body=${encodeURIComponent(message)}`, '_blank');
+      return;
     }
+
+    setSmsNumber(getContactNumber('phone') || '');
+    setShowSMSModal(true);
   };
 
   const confirmWhatsAppShare = async () => {
@@ -602,6 +378,7 @@ const BluetoothPrinter = ({ voter, familyMembers }) => {
     );
   };
 
+  // Bluetooth connection functions remain the same...
   const connectBluetooth = async () => {
     if (!navigator.bluetooth) {
       alert('Bluetooth is not supported in this browser. Please use Chrome or Edge on Android.');
@@ -784,13 +561,13 @@ const BluetoothPrinter = ({ voter, familyMembers }) => {
       const voterAge = (voter?.age ?? '')?.toString?.() || '';
 
       const translatedVoter = {
-        name: await translateToMarathi(voter.name || ''),
-        voterId: await translateToMarathi(voter.voterId || ''),
+        name: await translateToMarathi(safeString(voter.name || '')),
+        voterId: await translateToMarathi(safeString(voter.voterId || '')),
         serialNumber: await translateToMarathi(String(voter.serialNumber ?? '')),
         boothNumber: await translateToMarathi(String(voter.boothNumber ?? '')),
-        pollingStationAddress: await translateToMarathi(voter.pollingStationAddress || ''),
-        gender: await translateToMarathi(voterGender),
-        age: await translateToMarathi(voterAge),
+        pollingStationAddress: await translateToMarathi(safeString(voter.pollingStationAddress || '')),
+        gender: await translateToMarathi(safeString(voterGender)),
+        age: await translateToMarathi(safeString(voterAge)),
       };
 
       const translatedFamily =
@@ -801,12 +578,12 @@ const BluetoothPrinter = ({ voter, familyMembers }) => {
               const mAge = (member?.age ?? '')?.toString?.() || '';
               return {
                 ...member,
-                name: await translateToMarathi(member.name || ''),
-                voterId: await translateToMarathi(member.voterId || ''),
+                name: await translateToMarathi(safeString(member.name || '')),
+                voterId: await translateToMarathi(safeString(member.voterId || '')),
                 boothNumber: await translateToMarathi(String(member.boothNumber ?? '')),
-                pollingStationAddress: await translateToMarathi(member.pollingStationAddress || ''),
-                gender: await translateToMarathi(mGender),
-                age: await translateToMarathi(mAge),
+                pollingStationAddress: await translateToMarathi(safeString(member.pollingStationAddress || '')),
+                gender: await translateToMarathi(safeString(mGender)),
+                age: await translateToMarathi(safeString(mAge)),
               };
             })
           )
@@ -863,18 +640,23 @@ const BluetoothPrinter = ({ voter, familyMembers }) => {
       </div>
     `;
 
-    if (isFamily && Array.isArray(familyData) && familyData.length > 0) {
+    if (isFamily && Array.isArray(familyData) && familyData.length > 0 ) {
       html += `
         <div style="text-align:center;margin-top:6px;font-size:14px;"><b>कुटुंब तपशील</b></div>
-        <div style="margin-top:6px;font-size:14px;"><b>1) ${escapeHtml(voterData.name)}</b></div>
-        <div style="font-size:14px;">अनुक्रमांक: ${escapeHtml(voterData.serialNumber || '')}</div>
-        <div style="font-size:14px;">मतदार आयडी: ${escapeHtml(voterData.voterId || '')}</div>
-        <div style="font-size:14px;">बूथ क्रमांक: ${escapeHtml(voterData.boothNumber || '')}</div>
-        <div style="font-size:14px;">लिंग: ${escapeHtml(voterData.gender || '')}</div>
-        <div style="font-size:14px;">वय: ${escapeHtml(voterData.age || '')}</div>
-        <div style="margin-top:4px;border-bottom:1px solid #000;padding-bottom:10px;font-size:14px;">मतदान केंद्र: ${escapeHtml(voterData.pollingStationAddress || '')}</div>
+        
+        <!-- Main Voter Data (Head of Family) -->
+        <div style="margin-top:6px;font-size:14px;margin-bottom:2px;border-bottom:1px solid #000;padding-bottom:10px;">
+          <div style="font-weight:700;">1) ${escapeHtml(voterData.name || '')}</div>
+          <div style="margin-top:4px;">अनुक्रमांक: ${escapeHtml(voterData.serialNumber || '')}</div>
+          <div style="margin-top:2px;">मतदार आयडी: ${escapeHtml(voterData.voterId || '')}</div>
+          <div style="margin-top:2px;">बूथ क्रमांक: ${escapeHtml(voterData.boothNumber || '')}</div>
+          <div style="margin-top:2px;">लिंग: ${escapeHtml(voterData.gender || '')}</div>
+          <div style="margin-top:2px;">वय: ${escapeHtml(voterData.age || '')}</div>
+          <div style="margin-top:4px;font-size:13px;">मतदान केंद्र: ${escapeHtml(voterData.pollingStationAddress || '')}</div>
+        </div>
       `;
 
+      // Family Members
       familyData.forEach((m, i) => {
         html += `
           <div style="margin-top:6px;font-size:14px;margin-bottom:2px;border-bottom:1px solid #000;padding-bottom:10px;">
@@ -893,9 +675,11 @@ const BluetoothPrinter = ({ voter, familyMembers }) => {
         <div style="margin-top:6px;border-top:1px solid #000;padding-top:6px;font-size:13px;">
           मी आपला <b>${candidateInfo.name}</b> माझी निशाणी <b>${candidateInfo.electionSymbol}</b> या चिन्हावर मतदान करून मला प्रचंड बहुमतांनी विजय करा
         </div>
+        <div style="margin-top:6px;text-align:center;font-weight:700;">${escapeHtml(candidateInfo.name)}</div>
         <div style="margin-top:18px;text-align:center;"></div>
       `;
     } else {
+      // Individual Voter Printing (No Family Members)
       html += `
         <div style="text-align:center;margin-top:6px;font-weight:700;">मतदार तपशील</div>
         <div style="margin-top:6px;"><b>नाव:</b> ${escapeHtml(voterData.name || '')}</div>
@@ -905,7 +689,7 @@ const BluetoothPrinter = ({ voter, familyMembers }) => {
         <div style="margin-top:4px;"><b>लिंग:</b> ${escapeHtml(voterData.gender || '')}</div>
         <div style="margin-top:4px;"><b>वय:</b> ${escapeHtml(voterData.age || '')}</div>
         <div style="margin-top:6px;margin-bottom:10px;"><b>मतदान केंद्र:</b> ${escapeHtml(voterData.pollingStationAddress || '')}</div>
-       <div style="margin-top:6px;border-top:1px solid #000;padding-top:6px;font-size:13px;">
+        <div style="margin-top:6px;border-top:1px solid #000;padding-top:6px;font-size:13px;">
           मी आपला <b>${candidateInfo.name}</b> माझी निशाणी <b>${candidateInfo.electionSymbol}</b> या चिन्हावर मतदान करून मला प्रचंड बहुमतांनी विजय करा
         </div>
         <div style="margin-top:6px;text-align:center;font-weight:700;">${escapeHtml(candidateInfo.name)}</div>
@@ -948,7 +732,7 @@ const BluetoothPrinter = ({ voter, familyMembers }) => {
   };
 
   const escapeHtml = (str) => {
-    if (!str && str !== 0) return '';
+    if (str === null || str === undefined) return '';
     return String(str)
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
@@ -1012,10 +796,10 @@ const BluetoothPrinter = ({ voter, familyMembers }) => {
         <div className="flex items-center justify-between mb-4">
           <ActionBtn
             icon={FaWhatsapp}
-            label={generatingImage ? "Generating..." : "WhatsApp"}
+            label="WhatsApp"
             onClick={() => handleWhatsAppShare(false)}
             color="bg-green-500 hover:bg-green-600"
-            disabled={!voterData || generatingImage}
+            disabled={!voterData}
           />
           <ActionBtn
             icon={FiPrinter}
@@ -1029,7 +813,7 @@ const BluetoothPrinter = ({ voter, familyMembers }) => {
             label="Share"
             onClick={() => navigator.share?.({
               title: `${candidateInfo.name}`,
-              text: `Voter Details: ${voterData?.name}, Voter ID: ${voterData?.voterId}, Booth: ${voterData?.boothNumber}`,
+              text: `Voter Details: ${voterData?.name}, Voter ID: ${voterData?.voterId}, Booth: ${voterData?.boothNumber}\n\nVisit: ${WEBSITE_URL}`,
             })}
             color="bg-purple-500 hover:bg-purple-600"
             disabled={!voterData}
@@ -1071,7 +855,6 @@ const ActionBtn = ({ icon: Icon, label, onClick, color, disabled }) => (
     className={`${color} text-white py-4 px-5 rounded-xl font-medium transition-all duration-200 flex flex-col items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed text-sm shadow-sm hover:shadow-md`}
   >
     <Icon className="text-lg" />
-    <span className="text-xs">{label}</span>
   </button>
 );
 
